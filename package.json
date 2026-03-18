@@ -10,6 +10,7 @@
     "vite": "^8.0.0"
   },
   "dependencies": {
-    "three": "^0.183.2"
+    "three": "^0.183.2",
+    "three-mesh-bvh": "^0.9.9"
   }
 }
