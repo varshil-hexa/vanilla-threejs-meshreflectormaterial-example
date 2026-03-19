@@ -18,7 +18,7 @@ THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
 
 async function main() {
     const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100)
+    const camera = new THREE.PerspectiveCamera(25, window.innerWidth / window.innerHeight, 0.1, 100)
     camera.position.set(0, 10, 0)
     scene.add(camera)
 
@@ -74,6 +74,7 @@ async function main() {
     hdrLoader.load("/ijewel01.hdr", (tex) => {
         tex.mapping = THREE.EquirectangularReflectionMapping;
         scene.environment = tex;
+        // scene.background = tex;
         scene.environmentIntensity = 1;
 
         const dracoLoader = new DRACOLoader();
