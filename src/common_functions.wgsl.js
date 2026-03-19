@@ -4,7 +4,7 @@ export const constants = wgsl( /* wgsl */`
 
 	const BVH_STACK_DEPTH = 60u;
 	const INFINITY = 1e20;
-	const TRI_INTERSECT_EPSILON = 1e-5;
+	const TRI_INTERSECT_EPSILON = 1e-2;
 
 ` );
 

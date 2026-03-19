@@ -2,7 +2,9 @@ import './style/main.css'
 import * as THREE from 'three/webgpu'
 import { pass } from 'three/tsl';
 import { bloom } from 'three/examples/jsm/tsl/display/BloomNode.js';
-import { computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'; // Import BVH tools
+import { computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'; 
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'; // The Airtight Welder
+
 import MeshRefractionMaterial from './MeshRefractionMaterial_WebGPU'
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
@@ -20,6 +22,14 @@ async function main() {
     camera.position.set(0, 10, 0)
     scene.add(camera)
 
+    const params = {
+        enableBloom: true,
+        bloomStrength: 1.5,
+        bloomRadius: 0.2,
+        bloomThreshold: 5.0,
+        pixelRatio: window.devicePixelRatio,
+    };
+
     const renderer = new THREE.WebGPURenderer({
         canvas: document.querySelector('.webgl'),
         antialias: true
@@ -28,29 +38,14 @@ async function main() {
     renderer.toneMapping = THREE.ACESFilmicToneMapping; 
     renderer.toneMappingExposure = 1.0;
     renderer.setSize(window.innerWidth, window.innerHeight)
+    renderer.setPixelRatio(params.pixelRatio)
 
     const controls = new OrbitControls(camera, renderer.domElement);
 
     // --- Post Processing ---
     const postProcessing = new THREE.PostProcessing(renderer);
-    
     const scenePass = pass(scene, camera);
     const scenePassColor = scenePass.getTextureNode('output');
-    
-    // bloom( color, strength, radius, threshold )
-    const bloomPass = bloom(scenePassColor, 0.5, 0.2, 0.9);
-    
-    const params = {
-        enableBloom: true,
-        bloomStrength: 1.5,
-        bloomRadius: 0.2,
-        bloomThreshold: 5.0,
-    };
-
-    // We can conditionally add bloom or just use mix
-    // But since the API might vary, we can just rebuild the output node or use uniform nodes if needed.
-    // For simplicity, let's mix based on a uniform, or just toggle postProcessing entirely if possible.
-    // However, rebuilding outputNode is safest.
     
     function updatePostProcessing() {
         if (params.enableBloom) {
@@ -61,7 +56,6 @@ async function main() {
         }
         postProcessing.needsUpdate = true;
     }
-
     updatePostProcessing();
 
     // --- GUI ---
@@ -72,56 +66,55 @@ async function main() {
     bloomFolder.add(params, 'bloomRadius', 0.0, 1.0, 0.01).onChange(updatePostProcessing);
     bloomFolder.add(params, 'bloomThreshold', 0.0, 20.0, 0.1).onChange(updatePostProcessing);
 
+    gui.add(params, 'pixelRatio', 0.5, 4.0, 0.1).name('Resolution / DPI').onChange(() => {
+        renderer.setPixelRatio(params.pixelRatio);
+    });
+
     const hdrLoader = new RGBELoader();
     hdrLoader.load("/ijewel01.hdr", (tex) => {
         tex.mapping = THREE.EquirectangularReflectionMapping;
         scene.environment = tex;
         scene.environmentIntensity = 1;
-        // scene.background = tex;
 
-        // Load GLTF model
         const dracoLoader = new DRACOLoader();
         dracoLoader.setDecoderPath('https://www.gstatic.com/draco/v1/decoders/');
 
         const gltfLoader = new GLTFLoader();
         gltfLoader.setDRACOLoader(dracoLoader);
 
-        gltfLoader.load('/Diamond.glb', (gltf) => {
+       gltfLoader.load('/15.glb', (gltf) => {
             gltf.scene.traverse((child) => {
-                if (child.isMesh 
-                    // && child.name.includes('Diam')
-                ) {
+                if (child.isMesh && child.name.includes('Diam')) {
                     
-                    // 1. FORCE SHARP FACETS (Fixes the smooth mirror bug)
-                    // We must ensure the geometry is non-indexed so the normals are perfectly flat
-                    if (child.geometry.index) {
-                        child.geometry = child.geometry.toNonIndexed();
+                    // --- DPI RESOLUTION FIX: CPU-Baked Flat Normals ---
+                    // 1. Convert to non-indexed to bake perfectly sharp flat facets
+                    let geom = child.geometry.clone();
+                    if (geom.index) {
+                        geom = geom.toNonIndexed();
                     }
-                    child.geometry.computeVertexNormals();
+                    geom.computeVertexNormals();
 
-                    // 2. REBUILD INDEX BUFFER (Required for the BVH to work after flattening)
-                    if (!child.geometry.index) {
-                        const indices = new Uint32Array(child.geometry.attributes.position.count);
-                        for (let i = 0; i < indices.length; i++) indices[i] = i;
-                        child.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-                    }
+                    // 2. Create a sequential index buffer (Required for BVH to read the arrays)
+                    const indices = new Uint32Array(geom.attributes.position.count);
+                    for (let i = 0; i < indices.length; i++) indices[i] = i;
+                    geom.setIndex(new THREE.BufferAttribute(indices, 1));
 
-                    // 3. COMPUTE BVH
-                    child.geometry.computeBoundsTree();
+                    // 3. Compute the seamless BVH
+                    geom.computeBoundsTree();
                     
                     const original = child.material;
                     child.material = new MeshRefractionMaterial({
-                        geometry: child.geometry,
-                        bvh: child.geometry.boundsTree,
+                        geometry: geom, // Pass the new geometry
+                        bvh: geom.boundsTree,
                         envMap: tex,
                         ior: 2.4,
                         bounces: 3,
-                        aberrationStrength: 0.013,
+                        aberrationStrength: 0.015,
                         fresnel: 1.0
                     });
+                    
                     if (original && original.dispose) original.dispose();
                 }
-
             });
             scene.add(gltf.scene);
         });
@@ -131,6 +124,7 @@ async function main() {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(params.pixelRatio);
     });
 
     const loop = () => {
@@ -139,8 +133,7 @@ async function main() {
         if (params.enableBloom) {
             postProcessing.renderAsync();
             renderer.setClearColor(0xffffff, 1);
-        } else 
-            {
+        } else {
             renderer.renderAsync(scene, camera);
             renderer.setClearColor(0xffffff, 1);
         }
